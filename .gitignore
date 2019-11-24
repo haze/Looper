@@ -1,5 +1,6 @@
-#virtual environment files
+# virtual environment files
 venv
-
-#mp3 files (used to test the software)
+# mp3 files (used to test the software)
 *.mp3
+
+.git/

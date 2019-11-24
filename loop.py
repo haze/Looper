@@ -1,10 +1,10 @@
 import os
-import sys
 import numpy as np
 import lameenc
 import argparse
 from tqdm import tqdm
 from mpg123 import Mpg123, Out123
+
 
 class MusicFile:
     def __init__(self, filename):
@@ -85,8 +85,8 @@ class MusicFile:
         # (and mask it to omit any points where the dominant frequency is
         # just the baseline frequency)
         max_freq = frame_freq_sub[np.argmax(fft_2d_denoise, axis=0)]
-        self.max_freq = np.ma.masked_where(max_freq == frame_freq_sub[0],
-                max_freq)
+        self.max_freq = np.ma.masked_where(
+            max_freq == frame_freq_sub[0], max_freq)
 
     def sig_corr(self, s1, s2, comp_length):
         """Calculates the auto-correlation of the track (as compressed into
@@ -105,8 +105,8 @@ class MusicFile:
         one starting at s1 and one starting at s2
         """
 
-        matches = (self.max_freq[s1:s1+comp_length] ==
-                self.max_freq[s2:s2+comp_length])
+        matches = self.max_freq[s1:s1+comp_length] \
+            == self.max_freq[s2:s2+comp_length]
         return np.ma.sum(matches) / np.ma.count(matches)
 
     def find_loop_point(self, start_offset=200, test_len=500):
@@ -121,8 +121,9 @@ class MusicFile:
         best_start = None
         best_end = None
 
-        for start in range(200, len(self.max_freq) - test_len,
-                int(len(self.max_freq) / 10)):
+        for start in range(200,
+                           len(self.max_freq) - test_len,
+                           int(len(self.max_freq) / 10)):
             for end in range(start + 500, len(self.max_freq) - test_len):
                 sc = self.sig_corr(start, end, test_len)
                 if sc > max_corr:
@@ -151,10 +152,10 @@ class MusicFile:
                 if i == loop_offset:
                     i = start_offset
         except KeyboardInterrupt:
-            print() # so that the program ends on a newline
+            print()  # so that the program ends on a newline
 
     def save_loop(self, start_offset, loop_offset, output_path,
-                  loop_seconds=3600):
+                  loop_seconds, should_add_loop_end):
 
         encoder = lameenc.Encoder()
         encoder.set_in_sample_rate(self.rate)
@@ -177,24 +178,50 @@ class MusicFile:
                 if i == loop_offset:
                     i = start_offset
 
+            if should_add_loop_end:
+                while i < len(self.frames):
+                    file.write(encoder.encode(self.frames[i]))
+                    progress.update(1)
+                    i += 1
+
             file.write(encoder.flush())
 
-def loop_track(source_path, output_path="", loop_seconds=600):
+
+def loop_track(source_path, output_path, loop_seconds, should_add_loop_end):
     try:
         # Load the file
-        print("Loading {}...".format(source_path))
+        print("Analyzing {}…".format(source_path))
         track = MusicFile(source_path)
         track.calculate_max_frequencies()
         start_offset, best_offset, best_corr = track.find_loop_point()
-        print("Found loop from {} back to {} ({:.0f}% match)".format(
-            track.time_of_frame(best_offset),
+        loop_string = "Found loop from {} to {} ({:.0f}% match)".format(
             track.time_of_frame(start_offset),
-            best_corr * 100))
+            track.time_of_frame(best_offset),
+            best_corr * 100)
+
+        print(loop_string)
+
+        total_frames = len(track.frames)
+
+        # coverage for loop art
+        start_noloop_percent = (start_offset / total_frames)
+        loop_percent = ((best_offset - start_offset) / total_frames)
+        end_noloop_percent = ((total_frames - best_offset) / total_frames)
+
+        total_chars = len(loop_string) - 2  # account for [ and ]
+        left_loop_chars = '-' * round(total_chars * start_noloop_percent)
+        loop_chars = '█' * round(total_chars * loop_percent)
+        right_loop_chars = '-' * round(total_chars * end_noloop_percent)
+
+        print('[{}{}{}]'.format(left_loop_chars,
+                                loop_chars,
+                                right_loop_chars))
 
         if output_path:
             print("Saving to {}...".format(output_path))
             return track.save_loop(
-                start_offset, best_offset, output_path, loop_seconds)
+                start_offset, best_offset, output_path, loop_seconds,
+                should_add_loop_end)
 
         print("(press Ctrl+C to stop playback)")
         track.play_looping(start_offset, best_offset)
@@ -211,6 +238,12 @@ def parse_args():
     parser.add_argument(
         "-o", "--output", dest="output_path", type=str, help="Output filepath")
     parser.add_argument(
+        "-ale", "--add-loop-end",
+        dest="should_add_loop_end",
+        action='store_true',
+        help="When saving a song, add the end of the song after looping"
+    )
+    parser.add_argument(
         "-s", "--seconds", dest="loop_seconds",
         type=int, default=600, help="Amount of seconds to loop")
 
@@ -220,7 +253,7 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
 
-    if not args.output_path:
-        loop_track(args.source_path)
-    else:
-        loop_track(args.source_path, args.output_path, args.loop_seconds)
+    loop_track(args.source_path,
+               args.output_path,
+               args.loop_seconds,
+               args.should_add_loop_end)
